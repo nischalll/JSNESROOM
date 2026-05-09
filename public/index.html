@@ -100,18 +100,14 @@
     </div>
 
     <div class="controls-guide">
-      <div class="ctrl-col">
-        <div class="ctrl-title p1-color">PLAYER 1 (HOST)</div>
-        <div class="ctrl-row"><kbd>↑ ↓ ← →</kbd> Move</div>
-        <div class="ctrl-row"><kbd>Z</kbd> B &nbsp; <kbd>X</kbd> A</div>
-        <div class="ctrl-row"><kbd>Enter</kbd> Start &nbsp; <kbd>⇧</kbd> Select</div>
-      </div>
-      <div class="ctrl-divider">│</div>
-      <div class="ctrl-col">
-        <div class="ctrl-title p2-color">PLAYER 2 (GUEST)</div>
-        <div class="ctrl-row"><kbd>W A S D</kbd> Move</div>
-        <div class="ctrl-row"><kbd>K</kbd> B &nbsp; <kbd>L</kbd> A</div>
-        <div class="ctrl-row"><kbd>G</kbd> Start &nbsp; <kbd>H</kbd> Select</div>
+      <div class="ctrl-col" style="align-items: center; text-align: center;">
+        <div class="ctrl-title" style="color: #fff; display: flex; gap: 10px; align-items: center; justify-content: center;">
+          CONTROLS 
+          <button class="btn btn-small btn-p1" style="padding: 4px 8px; font-size: 6px;" onclick="App.startRemap()">⚙ REMAP</button>
+        </div>
+        <div class="ctrl-row"><kbd id="kbd-up">W</kbd> <kbd id="kbd-left">A</kbd> <kbd id="kbd-down">S</kbd> <kbd id="kbd-right">D</kbd> Move</div>
+        <div class="ctrl-row"><kbd id="kbd-b">J</kbd> B &nbsp; <kbd id="kbd-a">K</kbd> A</div>
+        <div class="ctrl-row"><kbd id="kbd-start">Enter</kbd> Start &nbsp; <kbd id="kbd-select">Shift</kbd> Select</div>
       </div>
     </div>
 

@@ -9,21 +9,38 @@ const App = (() => {
   const BTN = { A:0, B:1, SELECT:2, START:3, UP:4, DOWN:5, LEFT:6, RIGHT:7 };
 
   // ── Key → Button maps ─────────────────────────────────────────
-  const P1_KEYS = {
-    'ArrowUp':    BTN.UP,    'ArrowDown':  BTN.DOWN,
-    'ArrowLeft':  BTN.LEFT,  'ArrowRight': BTN.RIGHT,
-    'z': BTN.B,  'Z': BTN.B,
-    'x': BTN.A,  'X': BTN.A,
-    'Enter': BTN.START,  'Shift': BTN.SELECT
+  let KEYS = {
+    'w': BTN.UP, 'W': BTN.UP,
+    's': BTN.DOWN, 'S': BTN.DOWN,
+    'a': BTN.LEFT, 'A': BTN.LEFT,
+    'd': BTN.RIGHT, 'D': BTN.RIGHT,
+    'j': BTN.B, 'J': BTN.B,
+    'k': BTN.A, 'K': BTN.A,
+    'Enter': BTN.START,
+    'Shift': BTN.SELECT
   };
-  const P2_KEYS = {
-    'w': BTN.UP,  'W': BTN.UP,  's': BTN.DOWN,  'S': BTN.DOWN,
-    'a': BTN.LEFT,'A': BTN.LEFT,'d': BTN.RIGHT, 'D': BTN.RIGHT,
-    'k': BTN.B,   'K': BTN.B,
-    'l': BTN.A,   'L': BTN.A,
-    'g': BTN.START,'G': BTN.START,
-    'h': BTN.SELECT,'H': BTN.SELECT
-  };
+
+  // ── Remap Logic ───────────────────────────────────────────────
+  let isRemapping = false;
+  let remapStep = 0;
+  let newKeys = {};
+  const remapOrder = [
+    { btn: BTN.UP, name: 'UP', id: 'kbd-up' },
+    { btn: BTN.LEFT, name: 'LEFT', id: 'kbd-left' },
+    { btn: BTN.DOWN, name: 'DOWN', id: 'kbd-down' },
+    { btn: BTN.RIGHT, name: 'RIGHT', id: 'kbd-right' },
+    { btn: BTN.B, name: 'B', id: 'kbd-b' },
+    { btn: BTN.A, name: 'A', id: 'kbd-a' },
+    { btn: BTN.START, name: 'START', id: 'kbd-start' },
+    { btn: BTN.SELECT, name: 'SELECT', id: 'kbd-select' }
+  ];
+
+  function startRemap() {
+    isRemapping = true;
+    remapStep = 0;
+    newKeys = {};
+    toast('Press key for ' + remapOrder[remapStep].name, 'success');
+  }
 
   // ── State ─────────────────────────────────────────────────────
   let role      = null;   // 'host' | 'p2'
@@ -76,7 +93,7 @@ const App = (() => {
   function startHost() {
     role     = 'host';
     myPlayer = 1;
-    myKeys   = P1_KEYS;
+    myKeys   = KEYS;
     showScreen('host');
 
     const roomId = Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -135,7 +152,7 @@ const App = (() => {
 
     role     = 'p2';
     myPlayer = 2;
-    myKeys   = P2_KEYS;
+    myKeys   = KEYS;
 
     const statusEl = document.getElementById('join-status');
     statusEl.textContent = 'Connecting...';
@@ -289,10 +306,17 @@ const App = (() => {
       processor.onaudioprocess = e => {
         const L = e.outputBuffer.getChannelData(0);
         const R = e.outputBuffer.getChannelData(1);
-        for (let i = 0; i < bufSize; i++) {
-          L[i] = leftBuf.length  ? leftBuf.shift()  : 0;
-          R[i] = rightBuf.length ? rightBuf.shift() : 0;
+        const size = Math.min(bufSize, leftBuf.length);
+        for (let i = 0; i < size; i++) {
+          L[i] = leftBuf[i];
+          R[i] = rightBuf[i];
         }
+        for (let i = size; i < bufSize; i++) {
+          L[i] = 0;
+          R[i] = 0;
+        }
+        leftBuf.splice(0, size);
+        rightBuf.splice(0, size);
       };
       processor.connect(audioCtx.destination);
     } catch(e) {
@@ -340,22 +364,29 @@ const App = (() => {
 
   // ── Game loop ─────────────────────────────────────────────────
   let lastFrameTime = 0;
+  let unsimulatedMs = 0;
   const FRAME_MS = 1000 / 60; // 60 fps emulation
 
   function startLoop() {
     function loop(ts) {
       rafId = requestAnimationFrame(loop);
-      if (ts - lastFrameTime < FRAME_MS) return;
+      
+      if (!lastFrameTime) lastFrameTime = ts;
+      const dt = ts - lastFrameTime;
       lastFrameTime = ts;
+      
+      unsimulatedMs += dt;
+      // Prevent "spiral of death" if the browser tab goes inactive
+      if (unsimulatedMs > 100) unsimulatedMs = 100;
 
       if (!nes) return;
-      nes.frame();
-      frameCount++;
 
-      // We used to send a state snapshot every 10s here, but `nes.toJSON()` 
-      // creates a massive object (entire NES memory) that exceeds WebRTC's 
-      // max message size and causes the game to stutter every 10 seconds.
-      // So we rely purely on the initial sync + fast input broadcasting!
+      // Run exactly 60 frames per second, regardless of monitor refresh rate
+      while (unsimulatedMs >= FRAME_MS) {
+        nes.frame();
+        frameCount++;
+        unsimulatedMs -= FRAME_MS;
+      }
     }
     rafId = requestAnimationFrame(loop);
   }
@@ -363,6 +394,41 @@ const App = (() => {
   // ── Keyboard input ────────────────────────────────────────────
   function setupKeys() {
     document.addEventListener('keydown', e => {
+      if (isRemapping) {
+        e.preventDefault();
+        const stepInfo = remapOrder[remapStep];
+        
+        // Save the key mapping (both lowercase and uppercase if it's a letter)
+        if (e.key.length === 1) {
+          newKeys[e.key.toLowerCase()] = stepInfo.btn;
+          newKeys[e.key.toUpperCase()] = stepInfo.btn;
+        } else {
+          newKeys[e.key] = stepInfo.btn;
+        }
+
+        // Update the UI
+        let displayKey = e.key;
+        if (e.key === ' ') displayKey = 'Space';
+        else if (e.key === 'ArrowUp') displayKey = '↑';
+        else if (e.key === 'ArrowDown') displayKey = '↓';
+        else if (e.key === 'ArrowLeft') displayKey = '←';
+        else if (e.key === 'ArrowRight') displayKey = '→';
+        else displayKey = displayKey.toUpperCase();
+        
+        document.getElementById(stepInfo.id).textContent = displayKey;
+        
+        remapStep++;
+        if (remapStep < remapOrder.length) {
+          toast('Press key for ' + remapOrder[remapStep].name, 'success');
+        } else {
+          isRemapping = false;
+          KEYS = newKeys;
+          myKeys = KEYS;
+          toast('Controls updated!', 'success');
+        }
+        return;
+      }
+
       if (!nes || !document.getElementById('screen-game').classList.contains('active')) return;
       const btn = myKeys[e.key];
       if (btn === undefined) return;
@@ -372,7 +438,8 @@ const App = (() => {
     });
 
     document.addEventListener('keyup', e => {
-      if (!nes) return;
+      if (isRemapping) return;
+      if (!nes || !document.getElementById('screen-game').classList.contains('active')) return;
       const btn = myKeys[e.key];
       if (btn === undefined) return;
       e.preventDefault();
@@ -428,12 +495,7 @@ const App = (() => {
 
   // ── Public API ────────────────────────────────────────────────
   return {
-    startHost,
-    showJoin,
-    showWelcome,
-    joinGame,
-    copyRoomCode,
-    onRomSelected,
+    startHost, showJoin, joinGame, copyRoomCode, onRomSelected, showWelcome, startRemap,
     disconnect: showWelcome,
   };
 
