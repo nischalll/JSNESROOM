@@ -99,9 +99,19 @@ const App = (() => {
         toast('Player 2 joined!', 'success');
       }
     });
-    socket.on('peer_left', () => {
-      toast('Other player disconnected.', 'error');
-      showWelcome();
+    socket.on('peer_left', (data) => {
+      if (role === 'host' && data && data.role === 'p2') {
+        toast('Player 2 disconnected. Waiting for new player...', 'error');
+        p2Joined = false;
+        if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+        if (syncInterval) { clearInterval(syncInterval); syncInterval = null; }
+        showScreen('host');
+        setHostStatus('Player 2 left. Room is still open: ' + roomCode);
+        document.getElementById('host-progress').classList.add('hidden');
+      } else {
+        toast('Connection closed by host.', 'error');
+        showWelcome();
+      }
     });
     socket.on('disconnect', () => {
       if (role) toast('Lost connection to server.', 'error');
@@ -224,6 +234,10 @@ const App = (() => {
         if (role === 'host') {
           send({ t: 'game_start' });
           initAndPlay();
+          // Force an immediate sync so P2 snaps to exact current state if Host resumed
+          if (nes) {
+            try { send({ t: 'sync', state: nes.toJSON() }); } catch(e) {}
+          }
         }
         break;
 
@@ -281,18 +295,27 @@ const App = (() => {
 
   // ── Start emulation ───────────────────────────────────────────
   function initAndPlay() {
-    if (nes) return;
+    let resumed = false;
+    if (nes) {
+      resumed = true;
+      if (!rafId) startLoop();
+    } else {
+      initCanvas(); initAudio(); initNES(); startLoop();
+    }
     showScreen('game');
-    initCanvas(); initAudio(); initNES(); startLoop();
+
     // Host sends state to P2 every 3 seconds to keep emulators in sync
-    if (role === 'host') {
+    if (role === 'host' && !syncInterval) {
       syncInterval = setInterval(() => {
         if (nes) {
           try { send({ t: 'sync', state: nes.toJSON() }); } catch(e) {}
         }
       }, 3000);
     }
-    toast(role === 'host' ? 'Game started! You are P1.' : 'Game started! You are P2.', 'success');
+    const msg = role === 'host' 
+      ? (resumed ? 'Game resumed! You are P1.' : 'Game started! You are P1.')
+      : 'Game started! You are P2.';
+    toast(msg, 'success');
   }
 
   function initCanvas() {
@@ -321,7 +344,15 @@ const App = (() => {
   function initNES() {
     nes = new jsnes.NES({
       onFrame(fb)          { renderFrame(fb); },
-      onAudioSample(l, r)  { leftBuf.push(l); rightBuf.push(r); }
+      onAudioSample(l, r)  { 
+        leftBuf.push(l); rightBuf.push(r); 
+        // Cap audio buffer to prevent latency buildup (max 8192 samples = ~185ms)
+        if (leftBuf.length > 8192) {
+          const excess = leftBuf.length - 8192;
+          leftBuf.splice(0, excess);
+          rightBuf.splice(0, excess);
+        }
+      }
     });
     const bytes = new Uint8Array(romBuffer);
     let romStr = '';
