@@ -47,6 +47,7 @@ const App = (() => {
   let localBtnState = [0,0,0,0,0,0,0,0];
   let remoteBtnState = [0,0,0,0,0,0,0,0];
   let btnSyncInterval = null;
+  let syncInterval = null;  // periodic compressed state sync (host only)
 
   const SERVER = 'https://snesroomsignallingserver.onrender.com';
 
@@ -107,6 +108,7 @@ const App = (() => {
         p2Joined = false;
         if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
         if (btnSyncInterval) { clearInterval(btnSyncInterval); btnSyncInterval = null; }
+        if (syncInterval) { clearInterval(syncInterval); syncInterval = null; }
         showScreen('host');
         setHostStatus('Player 2 left. Room is still open: ' + roomCode);
         document.getElementById('host-progress').classList.add('hidden');
@@ -244,9 +246,39 @@ const App = (() => {
         if (role === 'host') {
           send({ t: 'game_start' });
           initAndPlay();
+          // Force an immediate sync so P2 snaps to exact current state if Host resumed
+          if (nes) {
+            try { send({ t: 'sync', d: compressState(nes.toJSON()) }); } catch(e) {}
+          }
+        }
+        break;
+
+      case 'sync':
+        // Host's state snapshot — P2 decompresses and applies it to stay in perfect sync
+        if (role === 'p2' && nes) {
+          try {
+            const stateObj = decompressState(msg.d);
+            nes.fromJSON(stateObj);
+          } catch(e) { console.warn('Sync apply failed:', e); }
         }
         break;
     }
+  }
+
+  // ── Compression helpers ───────────────────────────────────────
+  function compressState(stateObj) {
+    const bytes = fflate.strToU8(JSON.stringify(stateObj));
+    const compressed = fflate.deflateSync(bytes);
+    let binary = '';
+    for (let i = 0; i < compressed.length; i++) binary += String.fromCharCode(compressed[i]);
+    return btoa(binary);
+  }
+  function decompressState(b64) {
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const decompressed = fflate.inflateSync(bytes);
+    return JSON.parse(fflate.strFromU8(decompressed));
   }
 
   // ── ROM transfer ──────────────────────────────────────────────
@@ -310,6 +342,15 @@ const App = (() => {
           send({ t: 'btns', s: localBtnState });
         }
       }, 100);
+    }
+
+    // Host sends compressed state to P2 every 5 seconds to keep emulators in perfect sync
+    if (role === 'host' && !syncInterval) {
+      syncInterval = setInterval(() => {
+        if (nes && socket && socket.connected) {
+          try { send({ t: 'sync', d: compressState(nes.toJSON()) }); } catch(e) {}
+        }
+      }, 5000);
     }
 
     const msg = role === 'host' 
@@ -451,6 +492,7 @@ const App = (() => {
   function cleanup() {
     if (rafId)    { cancelAnimationFrame(rafId); rafId = null; }
     if (btnSyncInterval) { clearInterval(btnSyncInterval); btnSyncInterval = null; }
+    if (syncInterval) { clearInterval(syncInterval); syncInterval = null; }
     if (nes)      { nes = null; }
     if (audioCtx) { audioCtx.close().catch(() => {}); audioCtx = null; }
     if (socket)   { socket.disconnect(); socket = null; }
