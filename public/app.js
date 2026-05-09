@@ -44,6 +44,9 @@ const App = (() => {
   let rafId    = null;
   let frameCount = 0;
   let keysSetup = false;  // prevent duplicate key listeners
+  let localBtnState = [0,0,0,0,0,0,0,0];
+  let remoteBtnState = [0,0,0,0,0,0,0,0];
+  let btnSyncInterval = null;
 
   const SERVER = 'https://snesroomsignallingserver.onrender.com';
 
@@ -103,6 +106,7 @@ const App = (() => {
         toast('Player 2 disconnected. Waiting for new player...', 'error');
         p2Joined = false;
         if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+        if (btnSyncInterval) { clearInterval(btnSyncInterval); btnSyncInterval = null; }
         showScreen('host');
         setHostStatus('Player 2 left. Room is still open: ' + roomCode);
         document.getElementById('host-progress').classList.add('hidden');
@@ -220,11 +224,19 @@ const App = (() => {
         initAndPlay();
         break;
 
-      case 'b':
+      case 'btns':
         if (!nes) return;
         const remote = (role === 'host') ? 2 : 1;
-        if (msg.s) nes.buttonDown(remote, msg.b);
-        else       nes.buttonUp(remote,   msg.b);
+        const newState = msg.s;
+        for (let i = 0; i < 8; i++) {
+          if (newState[i] && !remoteBtnState[i]) {
+            nes.buttonDown(remote, i);
+            remoteBtnState[i] = 1;
+          } else if (!newState[i] && remoteBtnState[i]) {
+            nes.buttonUp(remote, i);
+            remoteBtnState[i] = 0;
+          }
+        }
         break;
 
       case 'rom_ready':
@@ -290,6 +302,15 @@ const App = (() => {
       initCanvas(); initAudio(); initNES(); startLoop();
     }
     showScreen('game');
+
+    // Automatically correct stuck keys every 100ms
+    if (!btnSyncInterval) {
+      btnSyncInterval = setInterval(() => {
+        if (nes && socket && socket.connected) {
+          send({ t: 'btns', s: localBtnState });
+        }
+      }, 100);
+    }
 
     const msg = role === 'host' 
       ? (resumed ? 'Game resumed! You are P1.' : 'Game started! You are P1.')
@@ -391,8 +412,11 @@ const App = (() => {
       const btn = myKeys[e.key];
       if (btn === undefined) return;
       e.preventDefault();
-      nes.buttonDown(myPlayer, btn);
-      send({ t: 'b', b: btn, s: 1 });
+      if (!localBtnState[btn]) {
+        localBtnState[btn] = 1;
+        nes.buttonDown(myPlayer, btn);
+        send({ t: 'btns', s: localBtnState });
+      }
     });
 
     document.addEventListener('keyup', e => {
@@ -401,8 +425,11 @@ const App = (() => {
       const btn = myKeys[e.key];
       if (btn === undefined) return;
       e.preventDefault();
-      nes.buttonUp(myPlayer, btn);
-      send({ t: 'b', b: btn, s: 0 });
+      if (localBtnState[btn]) {
+        localBtnState[btn] = 0;
+        nes.buttonUp(myPlayer, btn);
+        send({ t: 'btns', s: localBtnState });
+      }
     });
   }
 
@@ -423,6 +450,7 @@ const App = (() => {
   // ── Cleanup ───────────────────────────────────────────────────
   function cleanup() {
     if (rafId)    { cancelAnimationFrame(rafId); rafId = null; }
+    if (btnSyncInterval) { clearInterval(btnSyncInterval); btnSyncInterval = null; }
     if (nes)      { nes = null; }
     if (audioCtx) { audioCtx.close().catch(() => {}); audioCtx = null; }
     if (socket)   { socket.disconnect(); socket = null; }
@@ -430,6 +458,8 @@ const App = (() => {
     romBuffer = null; romChunks = {};
     romTotalChunks = 0; romReceivedCount = 0;
     frameCount = 0; role = null; roomCode = null; p2Joined = false;
+    localBtnState = [0,0,0,0,0,0,0,0];
+    remoteBtnState = [0,0,0,0,0,0,0,0];
     buf32 = null;  // reset so new imageData gets a fresh view
     lastFrameTime = 0; unsimulatedMs = 0;  // reset game loop timing
     document.getElementById('room-code').innerHTML = '<span class="blink">CONNECTING...</span>';
