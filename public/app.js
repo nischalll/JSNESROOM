@@ -52,6 +52,7 @@ const App = (() => {
   // ROM
   let romBuffer = null, romChunks = {}, romTotalChunks = 0,
       romReceivedCount = 0, romSize = 0;
+  let p2Joined = false;  // track whether P2 is already in the room
 
   // Canvas
   let canvas, ctx2d, imageData;
@@ -86,6 +87,7 @@ const App = (() => {
     socket.on('relay', msg => onData(msg));
     socket.on('peer_joined', () => {
       if (role === 'host') {
+        p2Joined = true;
         if (romBuffer) {
           setHostStatus('✓ Player 2 connected! Sending ROM...');
           sendROM();
@@ -140,9 +142,12 @@ const App = (() => {
     const reader = new FileReader();
     reader.onload = e => {
       romBuffer = e.target.result;
-      // If P2 already joined, send immediately
-      if (socket && socket.connected && role === 'host') {
-        setHostStatus('ROM loaded. Waiting for Player 2...');
+      if (p2Joined) {
+        // P2 is already waiting — send ROM right away
+        setHostStatus('Sending ROM to Player 2...');
+        sendROM();
+      } else {
+        setHostStatus('ROM loaded. Waiting for Player 2 to join...');
       }
     };
     reader.readAsArrayBuffer(file);
@@ -386,7 +391,7 @@ const App = (() => {
     leftBuf = []; rightBuf = [];
     romBuffer = null; romChunks = {};
     romTotalChunks = 0; romReceivedCount = 0;
-    frameCount = 0; role = null; roomCode = null;
+    frameCount = 0; role = null; roomCode = null; p2Joined = false;
     document.getElementById('room-code').innerHTML = '<span class="blink">CONNECTING...</span>';
     document.getElementById('btn-copy').disabled = true;
     document.getElementById('host-status').textContent = 'Getting your room code...';
