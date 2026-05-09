@@ -53,13 +53,29 @@ const App = (() => {
   let frameCount= 0;
 
   // ── PeerJS Server Config ──────────────────────────────────────
-  // By default, this uses the public PeerJS server (can be rate-limited).
-  // Once you host your custom server, uncomment the lines below and use `PEER_SERVER_CONFIG`.
   const PEER_SERVER_CONFIG = {
     host: 'snesroomsignallingserver.onrender.com',
     port: 443,
     path: '/',
-    secure: true
+    secure: true,
+    config: {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        // Open Relay (free public TURN by Metered.ca) — no signup needed
+        {
+          urls: [
+            'turn:openrelay.metered.ca:80',
+            'turn:openrelay.metered.ca:443',
+            'turn:openrelay.metered.ca:443?transport=tcp'
+          ],
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        }
+      ],
+      iceTransportPolicy: 'all'  // try direct P2P first, relay only if needed
+    }
   };
 
   // Audio
