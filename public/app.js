@@ -217,6 +217,14 @@ const App = (() => {
         if (msg.s) nes.buttonDown(remote, msg.b);
         else       nes.buttonUp(remote,   msg.b);
         break;
+
+      case 'rom_ready':
+        // P2 confirmed ROM is assembled — start both players now
+        if (role === 'host') {
+          send({ t: 'game_start' });
+          initAndPlay();
+        }
+        break;
     }
   }
 
@@ -233,9 +241,8 @@ const App = (() => {
     function next() {
       if (i >= total) {
         send({ t: 'rom_done' });
-        setHostProgress(1, '✓ ROM sent! Starting game...');
-        initAndPlay();
-        setTimeout(() => send({ t: 'game_start' }), 500);
+        setHostProgress(1, '✓ ROM sent! Waiting for Player 2 to load...');
+        // Don't start yet — wait for P2's 'rom_ready' confirmation
         return;
       }
       const start = i * CHUNK_SIZE;
@@ -258,8 +265,10 @@ const App = (() => {
       for (let j = 0; j < raw.length; j++) bytes[offset++] = raw.charCodeAt(j);
     }
     romBuffer = bytes.buffer;
-    setJoinProgress(1, '✓ ROM received! Waiting for host...');
+    setJoinProgress(1, '✓ ROM received! Ready to play.');
     toast('ROM received!', 'success');
+    // Tell host we're ready
+    send({ t: 'rom_ready' });
   }
 
   // ── Start emulation ───────────────────────────────────────────
