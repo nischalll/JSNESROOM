@@ -108,7 +108,11 @@ const App = (() => {
     peer.on('connection', incoming => {
       conn = incoming;
       setupConn();
-      setHostStatus('✓ Player 2 connected! Now select a ROM.');
+      if (romBuffer) {
+        setHostStatus('✓ Player 2 connected! Preparing to start...');
+      } else {
+        setHostStatus('✓ Player 2 connected! Now select a ROM.');
+      }
       toast('Player 2 joined!', 'success');
     });
 
@@ -172,14 +176,21 @@ const App = (() => {
 
   // ── Connection setup (shared) ─────────────────────────────────
   function setupConn() {
-    conn.on('open', () => {
+    const handleOpen = () => {
       console.log('[NESRoom] DataChannel open. role:', role);
       if (role === 'p2') {
         document.getElementById('join-status').textContent = 'Connected! Waiting for Host to load ROM...';
       }
       // If host already has ROM loaded, start sending immediately
       if (role === 'host' && romBuffer) sendROM();
-    });
+    };
+
+    if (conn.open) {
+      handleOpen();
+    } else {
+      conn.on('open', handleOpen);
+    }
+
     conn.on('data', onData);
     conn.on('close', () => { toast('Connection closed.', 'error'); showWelcome(); });
     conn.on('error', e => toast('Connection error: ' + e, 'error'));
