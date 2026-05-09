@@ -43,6 +43,7 @@ const App = (() => {
   let nes      = null;
   let rafId    = null;
   let frameCount = 0;
+  let keysSetup = false;  // prevent duplicate key listeners
 
   const SERVER = 'https://snesroomsignallingserver.onrender.com';
 
@@ -305,7 +306,7 @@ const App = (() => {
     setupKeys();
   }
 
-  let buf32;
+  let buf32 = null;
   function renderFrame(frameBuffer) {
     if (!buf32) buf32 = new Uint32Array(imageData.data.buffer);
     for (let i = 0; i < 256 * 240; i++) {
@@ -332,6 +333,8 @@ const App = (() => {
   }
 
   function setupKeys() {
+    if (keysSetup) return;  // only register once
+    keysSetup = true;
     document.addEventListener('keydown', e => {
       if (isRemapping) {
         e.preventDefault();
@@ -392,6 +395,8 @@ const App = (() => {
     romBuffer = null; romChunks = {};
     romTotalChunks = 0; romReceivedCount = 0;
     frameCount = 0; role = null; roomCode = null; p2Joined = false;
+    buf32 = null;  // reset so new imageData gets a fresh view
+    lastFrameTime = 0; unsimulatedMs = 0;  // reset game loop timing
     document.getElementById('room-code').innerHTML = '<span class="blink">CONNECTING...</span>';
     document.getElementById('btn-copy').disabled = true;
     document.getElementById('host-status').textContent = 'Getting your room code...';

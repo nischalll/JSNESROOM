@@ -1,5 +1,5 @@
-# Signaling server — runs on Render, not needed in the repo
-signaling-server/
-
 # Node
 node_modules/
+
+# Signaling server (separate repo)
+signaling-server/
