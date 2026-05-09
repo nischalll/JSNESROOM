@@ -349,15 +349,18 @@ const App = (() => {
   }
 
   // ── Frame render ──────────────────────────────────────────────
+  // Cache the 32-bit view of the canvas buffer for extreme speed
+  let buf32; 
+
   function renderFrame(frameBuffer) {
-    const data = imageData.data;
+    if (!buf32) buf32 = new Uint32Array(imageData.data.buffer);
+    
+    // Writing 1 32-bit integer per pixel is ~4x faster than writing 4 separate 8-bit bytes.
     for (let i = 0; i < 256 * 240; i++) {
       const c = frameBuffer[i];
-      const p = i * 4;
-      data[p]     = (c >> 16) & 0xff; // R
-      data[p + 1] = (c >>  8) & 0xff; // G
-      data[p + 2] =  c        & 0xff; // B
-      data[p + 3] = 0xff;             // A
+      // JSNES provides color as 0xRRGGBB.
+      // Canvas Uint32Array expects Little-Endian: 0xAABBGGRR
+      buf32[i] = 0xff000000 | ((c & 0xff) << 16) | (c & 0xff00) | ((c >> 16) & 0xff);
     }
     ctx2d.putImageData(imageData, 0, 0);
   }
