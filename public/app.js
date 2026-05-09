@@ -44,6 +44,7 @@ const App = (() => {
   let rafId    = null;
   let frameCount = 0;
   let keysSetup = false;  // prevent duplicate key listeners
+  let syncInterval = null;  // periodic state sync (host only)
 
   const SERVER = 'https://snesroomsignallingserver.onrender.com';
 
@@ -225,6 +226,13 @@ const App = (() => {
           initAndPlay();
         }
         break;
+
+      case 'sync':
+        // Host's state snapshot — P2 applies it to stay in sync
+        if (role === 'p2' && nes) {
+          try { nes.fromJSON(msg.state); } catch(e) { /* ignore minor errors */ }
+        }
+        break;
     }
   }
 
@@ -276,6 +284,14 @@ const App = (() => {
     if (nes) return;
     showScreen('game');
     initCanvas(); initAudio(); initNES(); startLoop();
+    // Host sends state to P2 every 3 seconds to keep emulators in sync
+    if (role === 'host') {
+      syncInterval = setInterval(() => {
+        if (nes) {
+          try { send({ t: 'sync', state: nes.toJSON() }); } catch(e) {}
+        }
+      }, 3000);
+    }
     toast(role === 'host' ? 'Game started! You are P1.' : 'Game started! You are P2.', 'success');
   }
 
@@ -397,6 +413,7 @@ const App = (() => {
   // ── Cleanup ───────────────────────────────────────────────────
   function cleanup() {
     if (rafId)    { cancelAnimationFrame(rafId); rafId = null; }
+    if (syncInterval) { clearInterval(syncInterval); syncInterval = null; }
     if (nes)      { nes = null; }
     if (audioCtx) { audioCtx.close().catch(() => {}); audioCtx = null; }
     if (socket)   { socket.disconnect(); socket = null; }
