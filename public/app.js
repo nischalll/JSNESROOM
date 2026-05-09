@@ -44,7 +44,6 @@ const App = (() => {
   let rafId    = null;
   let frameCount = 0;
   let keysSetup = false;  // prevent duplicate key listeners
-  let syncInterval = null;  // periodic state sync (host only)
 
   const SERVER = 'https://snesroomsignallingserver.onrender.com';
 
@@ -104,7 +103,6 @@ const App = (() => {
         toast('Player 2 disconnected. Waiting for new player...', 'error');
         p2Joined = false;
         if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
-        if (syncInterval) { clearInterval(syncInterval); syncInterval = null; }
         showScreen('host');
         setHostStatus('Player 2 left. Room is still open: ' + roomCode);
         document.getElementById('host-progress').classList.add('hidden');
@@ -234,17 +232,6 @@ const App = (() => {
         if (role === 'host') {
           send({ t: 'game_start' });
           initAndPlay();
-          // Force an immediate sync so P2 snaps to exact current state if Host resumed
-          if (nes) {
-            try { send({ t: 'sync', state: nes.toJSON() }); } catch(e) {}
-          }
-        }
-        break;
-
-      case 'sync':
-        // Host's state snapshot — P2 applies it to stay in sync
-        if (role === 'p2' && nes) {
-          try { nes.fromJSON(msg.state); } catch(e) { /* ignore minor errors */ }
         }
         break;
     }
@@ -304,14 +291,6 @@ const App = (() => {
     }
     showScreen('game');
 
-    // Host sends state to P2 every 3 seconds to keep emulators in sync
-    if (role === 'host' && !syncInterval) {
-      syncInterval = setInterval(() => {
-        if (nes) {
-          try { send({ t: 'sync', state: nes.toJSON() }); } catch(e) {}
-        }
-      }, 5000);
-    }
     const msg = role === 'host' 
       ? (resumed ? 'Game resumed! You are P1.' : 'Game started! You are P1.')
       : 'Game started! You are P2.';
@@ -444,7 +423,6 @@ const App = (() => {
   // ── Cleanup ───────────────────────────────────────────────────
   function cleanup() {
     if (rafId)    { cancelAnimationFrame(rafId); rafId = null; }
-    if (syncInterval) { clearInterval(syncInterval); syncInterval = null; }
     if (nes)      { nes = null; }
     if (audioCtx) { audioCtx.close().catch(() => {}); audioCtx = null; }
     if (socket)   { socket.disconnect(); socket = null; }
