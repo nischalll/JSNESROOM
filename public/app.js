@@ -310,7 +310,7 @@ const App = (() => {
         if (nes) {
           try { send({ t: 'sync', state: nes.toJSON() }); } catch(e) {}
         }
-      }, 3000);
+      }, 5000);
     }
     const msg = role === 'host' 
       ? (resumed ? 'Game resumed! You are P1.' : 'Game started! You are P1.')
