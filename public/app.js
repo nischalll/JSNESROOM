@@ -52,6 +52,16 @@ const App = (() => {
   let rafId     = null;
   let frameCount= 0;
 
+  // ── PeerJS Server Config ──────────────────────────────────────
+  // By default, this uses the public PeerJS server (can be rate-limited).
+  // Once you host your custom server, uncomment the lines below and use `PEER_SERVER_CONFIG`.
+  const PEER_SERVER_CONFIG = {
+    host: 'snesroomsignallingserver.onrender.com',
+    port: 443,
+    path: '/',
+    secure: true
+  };
+
   // Audio
   let audioCtx  = null;
   let leftBuf   = [];
@@ -97,7 +107,9 @@ const App = (() => {
     showScreen('host');
 
     const roomId = Math.random().toString(36).substring(2, 8).toUpperCase();
-    peer = new Peer(roomId, { debug: 0 });
+    
+    // Using your custom live Render server!
+    peer = new Peer(roomId, PEER_SERVER_CONFIG);
 
     peer.on('open', id => {
       document.getElementById('room-code').textContent = id;
@@ -109,9 +121,9 @@ const App = (() => {
       conn = incoming;
       setupConn();
       if (romBuffer) {
-        setHostStatus('✓ Player 2 connected! Preparing to start...');
+        setHostStatus('✓ Player 2 connected! Sending ROM...');
       } else {
-        setHostStatus('✓ Player 2 connected! Now select a ROM.');
+        setHostStatus('✓ Player 2 connected! Now select a ROM to start.');
       }
       toast('Player 2 joined!', 'success');
     });
@@ -151,7 +163,7 @@ const App = (() => {
   function showJoin() { showScreen('join'); }
 
   function joinGame() {
-    const code = document.getElementById('join-input').value.trim();
+    const code = document.getElementById('join-input').value.trim().toUpperCase();
     if (!code) { toast('Enter the room code!', 'error'); return; }
 
     role     = 'p2';
@@ -159,27 +171,43 @@ const App = (() => {
     myKeys   = KEYS;
 
     const statusEl = document.getElementById('join-status');
-    statusEl.textContent = 'Connecting...';
+    statusEl.textContent = 'Connecting to signaling server...';
     statusEl.classList.remove('hidden');
     document.getElementById('btn-join-go').disabled = true;
 
-    peer = new Peer(undefined, { debug: 0 });
-    peer.on('open', () => {
+    // Timeout: if not connected within 20s, show error
+    const joinTimeout = setTimeout(() => {
+      if (role === 'p2' && (!conn || !conn.open)) {
+        statusEl.textContent = '⚠ Connection timed out. Check the room code and try again.';
+        document.getElementById('btn-join-go').disabled = false;
+        toast('Connection timed out.', 'error');
+      }
+    }, 20000);
+
+    // Using your custom live Render server!
+    peer = new Peer(undefined, PEER_SERVER_CONFIG);
+    peer.on('open', myId => {
+      statusEl.textContent = 'Reaching host room "' + code + '"...';
       conn = peer.connect(code, { reliable: true, serialization: 'json' });
-      setupConn();
+      setupConn(joinTimeout);
     });
     peer.on('error', e => {
+      clearTimeout(joinTimeout);
       toast('Connection failed: ' + e.type, 'error');
       document.getElementById('btn-join-go').disabled = false;
+      statusEl.textContent = '⚠ Connection failed (' + e.type + '). Try again.';
     });
   }
 
   // ── Connection setup (shared) ─────────────────────────────────
-  function setupConn() {
+  function setupConn(joinTimeout) {
     const handleOpen = () => {
+      if (joinTimeout) clearTimeout(joinTimeout);
       console.log('[NESRoom] DataChannel open. role:', role);
       if (role === 'p2') {
-        document.getElementById('join-status').textContent = 'Connected! Waiting for Host to load ROM...';
+        const statusEl = document.getElementById('join-status');
+        statusEl.textContent = '✓ Connected to host! Waiting for ROM transfer...';
+        statusEl.classList.remove('hidden');
       }
       // If host already has ROM loaded, start sending immediately
       if (role === 'host' && romBuffer) sendROM();
@@ -193,7 +221,10 @@ const App = (() => {
 
     conn.on('data', onData);
     conn.on('close', () => { toast('Connection closed.', 'error'); showWelcome(); });
-    conn.on('error', e => toast('Connection error: ' + e, 'error'));
+    conn.on('error', e => {
+      if (joinTimeout) clearTimeout(joinTimeout);
+      toast('Connection error: ' + e, 'error');
+    });
   }
 
   // ── Data handler ──────────────────────────────────────────────
