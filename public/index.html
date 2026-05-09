@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NES Room — 2-Player Online</title>
+  <meta name="description" content="Play NES games online with a friend. Load a ROM, share your room code, play together instantly.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsnes@2.1.0/dist/jsnes.min.js"></script>
+</head>
+<body>
+
+  <!-- ===== WELCOME SCREEN ===== -->
+  <div id="screen-welcome" class="screen active">
+    <div class="stars"></div>
+    <div class="welcome-content">
+      <div class="logo-icon">🎮</div>
+      <h1 class="logo-title">NES ROOM</h1>
+      <p class="logo-sub">2-Player Online Emulator</p>
+      <div class="btn-group">
+        <button id="btn-host" class="btn btn-p1" onclick="App.startHost()">HOST GAME</button>
+        <button id="btn-join" class="btn btn-p2" onclick="App.showJoin()">JOIN GAME</button>
+      </div>
+      <p class="hint">Browser-to-browser. No installs. No server.</p>
+    </div>
+  </div>
+
+  <!-- ===== HOST SCREEN ===== -->
+  <div id="screen-host" class="screen">
+    <div class="panel">
+      <h2 class="screen-title">HOST GAME</h2>
+
+      <div class="room-box">
+        <div class="room-label">YOUR ROOM CODE</div>
+        <div id="room-code" class="room-code">
+          <span class="blink">CONNECTING...</span>
+        </div>
+        <button class="btn btn-small" id="btn-copy" onclick="App.copyRoomCode()" disabled>📋 COPY CODE</button>
+      </div>
+
+      <div id="host-status" class="status-msg">Getting your room code...</div>
+
+      <div class="rom-section">
+        <label class="file-label" for="rom-input">
+          <span id="rom-label-text">📁 SELECT ROM FILE (.nes)</span>
+          <input type="file" id="rom-input" accept=".nes" onchange="App.onRomSelected(event)">
+        </label>
+      </div>
+
+      <div id="host-progress" class="progress-wrap hidden">
+        <div class="progress-label" id="host-progress-label">Sending ROM...</div>
+        <div class="progress-bar"><div id="host-progress-fill" class="progress-fill p1-fill"></div></div>
+      </div>
+
+      <button class="btn btn-danger btn-small mt20" onclick="App.showWelcome()">✖ CANCEL</button>
+    </div>
+  </div>
+
+  <!-- ===== JOIN SCREEN ===== -->
+  <div id="screen-join" class="screen">
+    <div class="panel">
+      <h2 class="screen-title">JOIN GAME</h2>
+      <div class="input-group">
+        <label class="input-label">ROOM CODE FROM HOST</label>
+        <input type="text" id="join-input" class="code-input"
+          placeholder="e.g. abc123" maxlength="20"
+          onkeydown="if(event.key==='Enter') App.joinGame()">
+      </div>
+      <div id="join-status" class="status-msg hidden"></div>
+      <div id="join-progress" class="progress-wrap hidden">
+        <div class="progress-label" id="join-progress-label">Receiving ROM...</div>
+        <div class="progress-bar"><div id="join-progress-fill" class="progress-fill p2-fill"></div></div>
+      </div>
+      <div class="btn-group mt20">
+        <button id="btn-join-go" class="btn btn-p2" onclick="App.joinGame()">CONNECT →</button>
+        <button class="btn btn-danger btn-small" onclick="App.showWelcome()">← BACK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== GAME SCREEN ===== -->
+  <div id="screen-game" class="screen">
+    <div class="game-header">
+      <div class="player-badge p1-badge">
+        <span class="dot p1-dot"></span> P1 HOST
+      </div>
+      <div id="game-title" class="game-name">NES ROOM</div>
+      <div class="player-badge p2-badge">
+        P2 GUEST <span class="dot p2-dot"></span>
+      </div>
+    </div>
+
+    <div class="canvas-wrap">
+      <canvas id="nes-canvas" width="256" height="240"></canvas>
+      <div class="scanlines"></div>
+      <div class="crt-corners"></div>
+    </div>
+
+    <div class="controls-guide">
+      <div class="ctrl-col">
+        <div class="ctrl-title p1-color">PLAYER 1 (HOST)</div>
+        <div class="ctrl-row"><kbd>↑ ↓ ← →</kbd> Move</div>
+        <div class="ctrl-row"><kbd>Z</kbd> B &nbsp; <kbd>X</kbd> A</div>
+        <div class="ctrl-row"><kbd>Enter</kbd> Start &nbsp; <kbd>⇧</kbd> Select</div>
+      </div>
+      <div class="ctrl-divider">│</div>
+      <div class="ctrl-col">
+        <div class="ctrl-title p2-color">PLAYER 2 (GUEST)</div>
+        <div class="ctrl-row"><kbd>W A S D</kbd> Move</div>
+        <div class="ctrl-row"><kbd>K</kbd> B &nbsp; <kbd>L</kbd> A</div>
+        <div class="ctrl-row"><kbd>G</kbd> Start &nbsp; <kbd>H</kbd> Select</div>
+      </div>
+    </div>
+
+    <button class="btn btn-danger btn-small mt10" onclick="App.showWelcome()">✖ QUIT</button>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
