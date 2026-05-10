@@ -73,6 +73,16 @@ const App = (() => {
     }
   }
 
+  // Allow toggling debug logs at any time, even before game starts
+  document.addEventListener('keydown', e => {
+    if (e.key === '`' || e.key === '~') {
+      debugEnabled = !debugEnabled;
+      const container = document.getElementById('debug-logs');
+      if (container) container.style.display = debugEnabled ? 'block' : 'none';
+      logDebug(`Debug logs toggled ${debugEnabled ? 'ON' : 'OFF'}`);
+    }
+  });
+
   const SERVER = 'https://jsnesroom.onrender.com';
 
   // Audio
@@ -582,16 +592,6 @@ const App = (() => {
   function setupKeys() {
     if (keysSetup) return;  // only register once
     keysSetup = true;
-
-    // Toggle Debug Log with Backtick `
-    document.addEventListener('keydown', e => {
-      if (e.key === '`' || e.key === '~') {
-        debugEnabled = !debugEnabled;
-        const container = document.getElementById('debug-logs');
-        if (container) container.style.display = debugEnabled ? 'block' : 'none';
-        logDebug(`Debug logs toggled ${debugEnabled ? 'ON' : 'OFF'}`);
-      }
-    });
 
     document.addEventListener('keydown', e => {
       if (isRemapping) {
