@@ -45,14 +45,6 @@ io.on('connection', socket => {
     if (targetId) io.to(targetId).emit('relay', msg);
   });
 
-  // ===== WebRTC Signaling =====
-  socket.on('signal', ({ code, msg }) => {
-    const room = rooms[code];
-    if (!room) return;
-    const targetId = socket.id === room.hostId ? room.guestId : room.hostId;
-    if (targetId) io.to(targetId).emit('signal', msg);
-  });
-
   // Cleanup on disconnect
   socket.on('disconnect', () => {
     for (const [code, room] of Object.entries(rooms)) {
