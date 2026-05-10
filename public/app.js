@@ -73,7 +73,7 @@ const App = (() => {
     }
   }
 
-  const SERVER = 'https://snesroomsignallingserver.onrender.com';
+  const SERVER = 'https://jsnesroom.onrender.com';
 
   // Audio
   let audioCtx = null, leftBuf = [], rightBuf = [];
