@@ -268,15 +268,10 @@ const App = (() => {
   // ── Compression helpers ───────────────────────────────────────
   function compressState(stateObj) {
     const bytes = fflate.strToU8(JSON.stringify(stateObj));
-    const compressed = fflate.deflateSync(bytes);
-    let binary = '';
-    for (let i = 0; i < compressed.length; i++) binary += String.fromCharCode(compressed[i]);
-    return btoa(binary);
+    return fflate.deflateSync(bytes); // Socket.IO handles Uint8Array natively
   }
-  function decompressState(b64) {
-    const binary = atob(b64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  function decompressState(compressedData) {
+    const bytes = new Uint8Array(compressedData);
     const decompressed = fflate.inflateSync(bytes);
     return JSON.parse(fflate.strFromU8(decompressed));
   }
