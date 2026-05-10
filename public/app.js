@@ -48,6 +48,8 @@ const App = (() => {
   let remoteBtnState = [0,0,0,0,0,0,0,0];
   let btnSyncInterval = null;
   let syncInterval = null;  // periodic compressed state sync (host only)
+  let rtcConnection = null;
+  let dataChannel = null;
 
   // ── Debug Logging ─────────────────────────────────────────────
   let debugEnabled = false;
@@ -116,17 +118,31 @@ const App = (() => {
     socket.on('connect_error', e => {
       toast('Server unreachable: ' + e.message, 'error');
     });
-    socket.on('relay', msg => onData(msg));
+
     socket.on('peer_joined', () => {
       if (role === 'host') {
         p2Joined = true;
-        if (romBuffer) {
-          setHostStatus('✓ Player 2 connected! Sending ROM...');
-          sendROM();
-        } else {
-          setHostStatus('✓ Player 2 connected! Now select a ROM to start.');
+        setHostStatus('Player 2 connected! Establishing P2P connection...');
+        toast('Player 2 joined! Establishing P2P...', 'success');
+        initWebRTC();
+      }
+    });
+
+    socket.on('signal', async (msg) => {
+      if (!rtcConnection) initWebRTC();
+      try {
+        if (msg.type === 'offer') {
+          await rtcConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+          const answer = await rtcConnection.createAnswer();
+          await rtcConnection.setLocalDescription(answer);
+          socket.emit('signal', { code: roomCode, msg: { type: 'answer', sdp: answer } });
+        } else if (msg.type === 'answer') {
+          await rtcConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+        } else if (msg.type === 'ice') {
+          await rtcConnection.addIceCandidate(new RTCIceCandidate(msg.candidate));
         }
-        toast('Player 2 joined!', 'success');
+      } catch (e) {
+        logDebug('WebRTC Signal Error: ' + e.message);
       }
     });
     socket.on('peer_left', (data) => {
@@ -149,9 +165,76 @@ const App = (() => {
     });
   }
 
+  // ── WebRTC Setup ──────────────────────────────────────────────
+  const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+  function initWebRTC() {
+    rtcConnection = new RTCPeerConnection(rtcConfig);
+    rtcConnection.onicecandidate = (e) => {
+      if (e.candidate) {
+        socket.emit('signal', { code: roomCode, msg: { type: 'ice', candidate: e.candidate } });
+      }
+    };
+
+    if (role === 'host') {
+      dataChannel = rtcConnection.createDataChannel('game');
+      setupDataChannel();
+      rtcConnection.createOffer()
+        .then(offer => rtcConnection.setLocalDescription(offer))
+        .then(() => {
+          socket.emit('signal', { code: roomCode, msg: { type: 'offer', sdp: rtcConnection.localDescription } });
+        });
+    } else {
+      rtcConnection.ondatachannel = (e) => {
+        dataChannel = e.channel;
+        setupDataChannel();
+      };
+    }
+  }
+
+  function setupDataChannel() {
+    dataChannel.binaryType = 'arraybuffer';
+    dataChannel.onopen = () => {
+      logDebug('[WebRTC] DataChannel Open!');
+      if (role === 'host') {
+        if (romBuffer) {
+          setHostStatus('✓ P2P Connected! Sending ROM...');
+          sendROM();
+        } else {
+          setHostStatus('✓ P2P Connected! Now select a ROM to start.');
+        }
+      } else {
+        const statusEl = document.getElementById('join-status');
+        statusEl.textContent = '✓ P2P Connected! Waiting for host to send ROM...';
+      }
+    };
+    dataChannel.onclose = () => logDebug('[WebRTC] DataChannel Closed.');
+    dataChannel.onmessage = (e) => {
+      if (typeof e.data === 'string') {
+        const msg = JSON.parse(e.data);
+        if (msg.t === 'chunk') {
+          const binary = atob(msg.d);
+          const bytes = new Uint8Array(binary.length);
+          for(let i=0; i<binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          msg.d = bytes.buffer;
+        }
+        onData(msg);
+      } else {
+        onData({ t: 'sync', d: e.data });
+      }
+    };
+  }
+
   function send(msg) {
-    if (socket && socket.connected) {
-      socket.emit('relay', { code: roomCode, msg });
+    if (!dataChannel || dataChannel.readyState !== 'open') return;
+    
+    if (msg.t === 'sync') {
+      dataChannel.send(msg.d);
+    } else if (msg.t === 'chunk') {
+      msg.d = btoa(String.fromCharCode.apply(null, new Uint8Array(msg.d)));
+      dataChannel.send(JSON.stringify(msg));
+    } else {
+      dataChannel.send(JSON.stringify(msg));
     }
   }
 
@@ -186,9 +269,12 @@ const App = (() => {
     reader.onload = e => {
       romBuffer = e.target.result;
       if (p2Joined) {
-        // P2 is already waiting — send ROM right away
-        setHostStatus('Sending ROM to Player 2...');
-        sendROM();
+        if (dataChannel && dataChannel.readyState === 'open') {
+          setHostStatus('Sending ROM to Player 2...');
+          sendROM();
+        } else {
+          setHostStatus('ROM loaded. Waiting for P2P connection...');
+        }
       } else {
         setHostStatus('ROM loaded. Waiting for Player 2 to join...');
       }
@@ -218,8 +304,8 @@ const App = (() => {
       statusEl.textContent = 'Joining room "' + code + '"...';
       socket.emit('join', code);
       socket.on('join_ok', () => {
-        statusEl.textContent = '✓ Connected! Waiting for host to send ROM...';
-        toast('Connected to host!', 'success');
+        statusEl.textContent = '✓ Room joined! Establishing P2P connection...';
+        toast('Joined room! Connecting P2P...', 'success');
       });
       socket.on('join_err', msg => {
         statusEl.textContent = '⚠ ' + msg;
@@ -551,6 +637,8 @@ const App = (() => {
     if (syncInterval) { clearInterval(syncInterval); syncInterval = null; }
     if (nes)      { nes = null; }
     if (audioCtx) { audioCtx.close().catch(() => {}); audioCtx = null; }
+    if (dataChannel) { dataChannel.close(); dataChannel = null; }
+    if (rtcConnection) { rtcConnection.close(); rtcConnection = null; }
     if (socket)   { socket.disconnect(); socket = null; }
     leftBuf = []; rightBuf = [];
     romBuffer = null; romChunks = {};
