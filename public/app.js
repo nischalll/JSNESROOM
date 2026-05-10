@@ -136,11 +136,13 @@ const App = (() => {
       isProcessingSignal = true;
       const msg = signalQueue.shift();
       try {
+        logDebug(`Processing signal: ${msg.type}`);
         if (msg.type === 'offer') {
           await rtcConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
           const answer = await rtcConnection.createAnswer();
-          await rtcConnection.setLocalDescription(answer);
+          // EMIT ANSWER BEFORE SETTING LOCAL DESCRIPTION TO PREVENT ICE RACE
           socket.emit('signal', { code: roomCode, msg: { type: 'answer', sdp: answer } });
+          await rtcConnection.setLocalDescription(answer);
         } else if (msg.type === 'answer') {
           await rtcConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
         } else if (msg.type === 'ice') {
@@ -184,8 +186,11 @@ const App = (() => {
 
   function initWebRTC() {
     rtcConnection = new RTCPeerConnection(rtcConfig);
+    rtcConnection.onconnectionstatechange = () => logDebug(`[WebRTC] State: ${rtcConnection.connectionState}`);
+    
     rtcConnection.onicecandidate = (e) => {
       if (e.candidate) {
+        logDebug('Generated ICE Candidate, sending...');
         socket.emit('signal', { code: roomCode, msg: { type: 'ice', candidate: e.candidate } });
       }
     };
@@ -194,9 +199,11 @@ const App = (() => {
       dataChannel = rtcConnection.createDataChannel('game');
       setupDataChannel();
       rtcConnection.createOffer()
-        .then(offer => rtcConnection.setLocalDescription(offer))
-        .then(() => {
-          socket.emit('signal', { code: roomCode, msg: { type: 'offer', sdp: rtcConnection.localDescription } });
+        .then(offer => {
+          // EMIT OFFER BEFORE SETTING LOCAL DESCRIPTION TO PREVENT ICE RACE
+          logDebug('Generated Offer, sending...');
+          socket.emit('signal', { code: roomCode, msg: { type: 'offer', sdp: offer } });
+          return rtcConnection.setLocalDescription(offer);
         });
     } else {
       rtcConnection.ondatachannel = (e) => {
