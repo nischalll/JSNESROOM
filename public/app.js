@@ -128,8 +128,13 @@ const App = (() => {
       }
     });
 
-    socket.on('signal', async (msg) => {
-      if (!rtcConnection) initWebRTC();
+    let signalQueue = [];
+    let isProcessingSignal = false;
+
+    async function processSignalQueue() {
+      if (isProcessingSignal || signalQueue.length === 0) return;
+      isProcessingSignal = true;
+      const msg = signalQueue.shift();
       try {
         if (msg.type === 'offer') {
           await rtcConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
@@ -144,7 +149,16 @@ const App = (() => {
       } catch (e) {
         logDebug('WebRTC Signal Error: ' + e.message);
       }
+      isProcessingSignal = false;
+      processSignalQueue();
+    }
+
+    socket.on('signal', (msg) => {
+      if (!rtcConnection) initWebRTC();
+      signalQueue.push(msg);
+      processSignalQueue();
     });
+
     socket.on('peer_left', (data) => {
       if (role === 'host' && data && data.role === 'p2') {
         toast('Player 2 disconnected. Waiting for new player...', 'error');
