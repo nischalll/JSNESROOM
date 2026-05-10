@@ -52,14 +52,21 @@ const App = (() => {
   // ── Debug Logging ─────────────────────────────────────────────
   let debugEnabled = false;
   function logDebug(msg) {
+    if (!debugEnabled) return; // Zero overhead when panel is hidden
+    
     const time = new Date().toISOString().split('T')[1].slice(0, -1);
     const line = `[${time}] [${role ? role.toUpperCase() : 'APP'}] ${msg}`;
     console.log(line);
+    
     const container = document.getElementById('debug-logs');
-    if (container && debugEnabled) {
+    if (container) {
       const el = document.createElement('div');
       el.textContent = line;
       container.appendChild(el);
+      // Cap at 50 logs to prevent DOM memory bloat
+      while (container.childNodes.length > 50) {
+        container.removeChild(container.firstChild);
+      }
       container.scrollTop = container.scrollHeight;
     }
   }
