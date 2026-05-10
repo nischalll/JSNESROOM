@@ -49,6 +49,21 @@ const App = (() => {
   let btnSyncInterval = null;
   let syncInterval = null;  // periodic compressed state sync (host only)
 
+  // ── Debug Logging ─────────────────────────────────────────────
+  let debugEnabled = false;
+  function logDebug(msg) {
+    const time = new Date().toISOString().split('T')[1].slice(0, -1);
+    const line = `[${time}] [${role ? role.toUpperCase() : 'APP'}] ${msg}`;
+    console.log(line);
+    const container = document.getElementById('debug-logs');
+    if (container && debugEnabled) {
+      const el = document.createElement('div');
+      el.textContent = line;
+      container.appendChild(el);
+      container.scrollTop = container.scrollHeight;
+    }
+  }
+
   const SERVER = 'https://snesroomsignallingserver.onrender.com';
 
   // Audio
@@ -83,7 +98,12 @@ const App = (() => {
   function connectSocket(onReady) {
     socket = io(SERVER, { transports: ['websocket', 'polling'] });
     socket.on('connect', () => {
-      console.log('[NESRoom] Socket connected:', socket.id);
+      logDebug(`Connected to server. Socket ID: ${socket.id}`);
+      if (role === 'host') {
+        socket.emit('create_room');
+      } else if (role === 'p2') {
+        socket.emit('join_room', roomCode);
+      }
       onReady();
     });
     socket.on('connect_error', e => {
@@ -230,15 +250,19 @@ const App = (() => {
         if (!nes) return;
         const remote = (role === 'host') ? 2 : 1;
         const newState = msg.s;
+        let changed = false;
         for (let i = 0; i < 8; i++) {
           if (newState[i] && !remoteBtnState[i]) {
             nes.buttonDown(remote, i);
             remoteBtnState[i] = 1;
+            changed = true;
           } else if (!newState[i] && remoteBtnState[i]) {
             nes.buttonUp(remote, i);
             remoteBtnState[i] = 0;
+            changed = true;
           }
         }
+        if (changed) logDebug(`Applied remote buttons: [${newState.join(',')}]`);
         break;
 
       case 'rom_ready':
@@ -257,9 +281,22 @@ const App = (() => {
         // Host's state snapshot — P2 decompresses and applies it to stay in perfect sync
         if (role === 'p2' && nes) {
           try {
+            logDebug('Received compressed state sync from Host.');
             const stateObj = decompressState(msg.d);
             nes.fromJSON(stateObj);
-          } catch(e) { console.warn('Sync apply failed:', e); }
+            
+            // CRITICAL FIX: nes.fromJSON() overwrites the emulator's internal controller memory.
+            // If the Host's state thinks we are NOT holding UP, but our physical finger is on the UP key,
+            // the game will stop moving us. We MUST immediately re-apply our local physical keys!
+            for (let i=0; i<8; i++) {
+              if (localBtnState[i]) nes.buttonDown(myPlayer, i);
+              else nes.buttonUp(myPlayer, i);
+              
+              if (remoteBtnState[i]) nes.buttonDown(1, i); // Host is player 1
+              else nes.buttonUp(1, i);
+            }
+            logDebug('State applied and physical keys restored.');
+          } catch(e) { logDebug(`Sync apply failed: ${e.message}`); }
         }
         break;
     }
@@ -343,7 +380,11 @@ const App = (() => {
     if (role === 'host' && !syncInterval) {
       syncInterval = setInterval(() => {
         if (nes && socket && socket.connected) {
-          try { send({ t: 'sync', d: compressState(nes.toJSON()) }); } catch(e) {}
+          try { 
+            const stateData = compressState(nes.toJSON());
+            send({ t: 'sync', d: stateData }); 
+            logDebug('Sent state sync to Player 2.');
+          } catch(e) { logDebug('Failed to send sync.'); }
         }
       }, 5000);
     }
@@ -427,6 +468,17 @@ const App = (() => {
   function setupKeys() {
     if (keysSetup) return;  // only register once
     keysSetup = true;
+
+    // Toggle Debug Log with Backtick `
+    document.addEventListener('keydown', e => {
+      if (e.key === '`' || e.key === '~') {
+        debugEnabled = !debugEnabled;
+        const container = document.getElementById('debug-logs');
+        if (container) container.style.display = debugEnabled ? 'block' : 'none';
+        logDebug(`Debug logs toggled ${debugEnabled ? 'ON' : 'OFF'}`);
+      }
+    });
+
     document.addEventListener('keydown', e => {
       if (isRemapping) {
         e.preventDefault();
@@ -452,6 +504,7 @@ const App = (() => {
         localBtnState[btn] = 1;
         nes.buttonDown(myPlayer, btn);
         send({ t: 'btns', s: localBtnState });
+        logDebug(`Key pressed. Local state: [${localBtnState.join(',')}]`);
       }
     });
 
@@ -465,6 +518,7 @@ const App = (() => {
         localBtnState[btn] = 0;
         nes.buttonUp(myPlayer, btn);
         send({ t: 'btns', s: localBtnState });
+        logDebug(`Key released. Local state: [${localBtnState.join(',')}]`);
       }
     });
   }

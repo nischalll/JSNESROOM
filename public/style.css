@@ -185,17 +185,66 @@ html, body {
 /* ===== ROOM BOX ===== */
 .room-box {
   width: 100%;
-  background: rgba(0,0,0,0.4);
-  border: 1px solid var(--p1);
-  border-radius: 8px;
-  padding: 20px;
+  max-width: 400px;
+  background: var(--dark-2);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  padding: 30px;
+  border-radius: 12px;
   text-align: center;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+}
+
+/* Controls Remapping */
+.controls-setup {
+  margin-top: 15px;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  box-shadow: 0 0 20px rgba(0,229,255,0.1);
+  gap: 8px;
 }
+.btn-remap {
+  padding: 8px;
+  background: var(--dark-2);
+  border: 1px solid rgba(255,255,255,0.2);
+  color: #aaa;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: 'Inter', sans-serif;
+  font-weight: 600;
+  display: flex;
+  justify-content: space-between;
+}
+.btn-remap:hover { background: #333; color: #fff; }
+.btn-remap span { color: var(--accent); }
+
+/* Debug Logs */
+#debug-logs {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  width: 400px;
+  height: 250px;
+  background: rgba(0, 0, 0, 0.85);
+  color: #0f0;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  padding: 10px;
+  border-radius: 4px;
+  border: 1px solid #0f0;
+  overflow-y: auto;
+  z-index: 9999;
+  pointer-events: none;
+  line-height: 1.4;
+}
+#debug-logs div {
+  margin-bottom: 2px;
+  word-wrap: break-word;
+}
+
 .room-label {
   font-family: var(--pixel);
   font-size: 8px;
