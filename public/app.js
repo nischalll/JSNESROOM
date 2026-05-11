@@ -220,40 +220,36 @@ const App = (() => {
     let retries = 0;
     const MAX_RETRIES = 5;
 
-    function attemptConnect() {
-      if (peer) { peer.destroy(); peer = null; }
-      peer = new Peer();
-      peer.on('open', () => {
-        logDebug('PeerJS open, connecting to host: ' + roomCode + ' (attempt ' + (retries+1) + ')');
-        statusEl.textContent = 'Connecting to host...' + (retries > 0 ? ' (retry ' + retries + ')' : '');
-        conn = peer.connect(roomCode, { reliable: true, serialization: 'binary' });
-        conn.on('open', () => {
-          onConnOpen();
-          statusEl.textContent = '✓ Connected! Waiting for host to send ROM...';
-          toast('Connected to host!', 'success');
-        });
-        conn.on('data', msg => onData(msg));
-        conn.on('close', onConnClose);
-        conn.on('error', e => {
-          logDebug('Conn error: ' + e);
-          // Don't give up here, peer error handler will retry
-        });
+    peer = new Peer();
+
+    function tryConnect() {
+      logDebug('Connecting to host: ' + roomCode + ' (attempt ' + (retries + 1) + ')');
+      statusEl.textContent = 'Connecting to host...' + (retries > 0 ? ' (retry ' + retries + ')' : '');
+      conn = peer.connect(roomCode, { reliable: true, serialization: 'binary' });
+      conn.on('open', () => {
+        onConnOpen();
+        statusEl.textContent = '✓ Connected! Waiting for host to send ROM...';
+        toast('Connected to host!', 'success');
       });
-      peer.on('error', e => {
-        logDebug('Peer error: ' + e.type + ' (attempt ' + (retries+1) + ')');
-        if (e.type === 'peer-unavailable' && retries < MAX_RETRIES) {
-          retries++;
-          statusEl.textContent = 'Host not found, retrying... (' + retries + '/' + MAX_RETRIES + ')';
-          setTimeout(attemptConnect, 1500);
-        } else {
-          statusEl.textContent = '⚠ ' + e.type + '. Check the room code.';
-          document.getElementById('btn-join-go').disabled = false;
-          toast('Error: ' + e.type, 'error');
-        }
-      });
+      conn.on('data', msg => onData(msg));
+      conn.on('close', onConnClose);
+      conn.on('error', e => logDebug('Conn error: ' + e));
     }
 
-    attemptConnect();
+    peer.on('open', () => tryConnect());
+
+    peer.on('error', e => {
+      logDebug('Peer error: ' + e.type + ' (attempt ' + (retries + 1) + ')');
+      if (e.type === 'peer-unavailable' && retries < MAX_RETRIES) {
+        retries++;
+        statusEl.textContent = 'Host not found, retrying... (' + retries + '/' + MAX_RETRIES + ')';
+        setTimeout(tryConnect, 1500);
+      } else {
+        statusEl.textContent = '⚠ ' + e.type + '. Check the room code.';
+        document.getElementById('btn-join-go').disabled = false;
+        toast('Error: ' + e.type, 'error');
+      }
+    });
   }
 
   // ── Data handler ──────────────────────────────────────────────
