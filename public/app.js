@@ -1,5 +1,5 @@
 /* ================================================================
-   NES ROOM — app.js  (Socket.IO relay version)
+   NES ROOM — app.js  (PeerJS WebRTC P2P version)
 ================================================================ */
 
 const App = (() => {
@@ -39,7 +39,8 @@ const App = (() => {
   let myPlayer = 1;
   let myKeys   = {};
   let roomCode = null;
-  let socket   = null;
+  let peer     = null;   // PeerJS Peer instance
+  let conn     = null;   // PeerJS DataConnection
   let nes      = null;
   let rafId    = null;
   let frameCount = 0;
@@ -81,7 +82,7 @@ const App = (() => {
     }
   });
 
-  const SERVER = 'https://jsnesroom.onrender.com';
+  // PeerJS free cloud used for signaling only (1 handshake). All game data is P2P.
 
   // Audio
   let audioCtx = null, leftBuf = [], rightBuf = [];
@@ -111,57 +112,30 @@ const App = (() => {
     el._t = setTimeout(() => el.classList.remove('show'), 3000);
   }
 
-  // ── Socket setup ──────────────────────────────────────────────
-  function connectSocket(onReady) {
-    socket = io(SERVER, { transports: ['websocket', 'polling'] });
-    socket.on('connect', () => {
-      logDebug(`Connected to server. Socket ID: ${socket.id}`);
-      if (role === 'host') {
-        socket.emit('create_room');
-      } else if (role === 'p2') {
-        socket.emit('join_room', roomCode);
-      }
-      onReady();
-    });
-    socket.on('connect_error', e => {
-      toast('Server unreachable: ' + e.message, 'error');
-    });
-    socket.on('relay', msg => onData(msg));
-    socket.on('peer_joined', () => {
-      if (role === 'host') {
-        p2Joined = true;
-        if (romBuffer) {
-          setHostStatus('✓ Player 2 connected! Sending ROM...');
-          sendROM();
-        } else {
-          setHostStatus('✓ Player 2 connected! Now select a ROM to start.');
-        }
-        toast('Player 2 joined!', 'success');
-      }
-    });
-    socket.on('peer_left', (data) => {
-      if (role === 'host' && data && data.role === 'p2') {
-        toast('Player 2 disconnected. Waiting for new player...', 'error');
-        p2Joined = false;
-        if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
-        if (btnSyncInterval) { clearInterval(btnSyncInterval); btnSyncInterval = null; }
-        if (syncInterval) { clearInterval(syncInterval); syncInterval = null; }
-        showScreen('host');
-        setHostStatus('Player 2 left. Room is still open: ' + roomCode);
-        document.getElementById('host-progress').classList.add('hidden');
-      } else {
-        toast('Connection closed by host.', 'error');
-        showWelcome();
-      }
-    });
-    socket.on('disconnect', () => {
-      if (role) toast('Lost connection to server.', 'error');
-    });
+  // ── PeerJS P2P helpers ────────────────────────────────────────
+  function send(msg) {
+    if (conn && conn.open) conn.send(msg);
   }
 
-  function send(msg) {
-    if (socket && socket.connected) {
-      socket.emit('relay', { code: roomCode, msg });
+  function onConnOpen() {
+    logDebug('P2P data channel open.');
+  }
+
+  function onConnClose() {
+    logDebug('P2P connection closed.');
+    conn = null;
+    if (role === 'host') {
+      toast('Player 2 disconnected. Waiting for new player...', 'error');
+      p2Joined = false;
+      if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+      if (btnSyncInterval) { clearInterval(btnSyncInterval); btnSyncInterval = null; }
+      if (syncInterval) { clearInterval(syncInterval); syncInterval = null; }
+      showScreen('host');
+      setHostStatus('Player 2 left. Room is still open: ' + roomCode);
+      document.getElementById('host-progress').classList.add('hidden');
+    } else {
+      toast('Connection closed by host.', 'error');
+      showWelcome();
     }
   }
 
@@ -169,16 +143,35 @@ const App = (() => {
   function startHost() {
     role = 'host'; myPlayer = 1; myKeys = KEYS;
     showScreen('host');
-    roomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+    setHostStatus('Getting your room code...');
 
-    connectSocket(() => {
-      socket.emit('host', roomCode);
-      socket.on('host_ok', code => {
-        document.getElementById('room-code').textContent = code;
-        document.getElementById('btn-copy').disabled = false;
-        setHostStatus('Share the code above with Player 2 — then load your ROM.');
-      });
+    peer = new Peer(); // PeerJS assigns a free unique ID
+    peer.on('open', id => {
+      roomCode = id;
+      document.getElementById('room-code').textContent = id;
+      document.getElementById('btn-copy').disabled = false;
+      setHostStatus('Share the code above with Player 2 — then load your ROM.');
+      logDebug('PeerJS opened. Room code: ' + id);
     });
+    peer.on('connection', c => {
+      conn = c;
+      conn.serialization = 'binary';
+      conn.on('open', () => {
+        p2Joined = true;
+        onConnOpen();
+        if (romBuffer) {
+          setHostStatus('✓ Player 2 connected! Sending ROM...');
+          sendROM();
+        } else {
+          setHostStatus('✓ Player 2 connected! Now select a ROM to start.');
+        }
+        toast('Player 2 joined!', 'success');
+      });
+      conn.on('data', msg => onData(msg));
+      conn.on('close', onConnClose);
+      conn.on('error', e => logDebug('Conn error: ' + e));
+    });
+    peer.on('error', e => toast('Connection error: ' + e.type, 'error'));
   }
 
   function copyRoomCode() {
@@ -214,28 +207,39 @@ const App = (() => {
   function showJoin() { showScreen('join'); }
 
   function joinGame() {
-    const code = document.getElementById('join-input').value.trim().toUpperCase();
+    const code = document.getElementById('join-input').value.trim();
     if (!code) { toast('Enter the room code!', 'error'); return; }
 
     role = 'p2'; myPlayer = 2; myKeys = KEYS; roomCode = code;
 
     const statusEl = document.getElementById('join-status');
-    statusEl.textContent = 'Connecting to server...';
+    statusEl.textContent = 'Connecting...';
     statusEl.classList.remove('hidden');
     document.getElementById('btn-join-go').disabled = true;
 
-    connectSocket(() => {
-      statusEl.textContent = 'Joining room "' + code + '"...';
-      socket.emit('join', code);
-      socket.on('join_ok', () => {
+    peer = new Peer();
+    peer.on('open', () => {
+      logDebug('PeerJS open, connecting to host: ' + code);
+      statusEl.textContent = 'Connecting to host...';
+      conn = peer.connect(code, { reliable: true, serialization: 'binary' });
+      conn.on('open', () => {
+        onConnOpen();
         statusEl.textContent = '✓ Connected! Waiting for host to send ROM...';
         toast('Connected to host!', 'success');
       });
-      socket.on('join_err', msg => {
-        statusEl.textContent = '⚠ ' + msg;
+      conn.on('data', msg => onData(msg));
+      conn.on('close', onConnClose);
+      conn.on('error', e => {
+        statusEl.textContent = '⚠ Could not connect. Check the room code.';
         document.getElementById('btn-join-go').disabled = false;
-        toast(msg, 'error');
+        toast('Connection failed', 'error');
+        logDebug('Conn error: ' + e);
       });
+    });
+    peer.on('error', e => {
+      statusEl.textContent = '⚠ ' + e.type + '. Check the room code.';
+      document.getElementById('btn-join-go').disabled = false;
+      toast('Error: ' + e.type, 'error');
     });
   }
 
@@ -322,7 +326,7 @@ const App = (() => {
   // ── Compression helpers ───────────────────────────────────────
   function compressState(stateObj) {
     const bytes = fflate.strToU8(JSON.stringify(stateObj));
-    return fflate.deflateSync(bytes); // Socket.IO handles Uint8Array natively
+    return fflate.deflateSync(bytes); // Uint8Array sent natively over WebRTC data channel
   }
   function decompressState(compressedData) {
     const bytes = new Uint8Array(compressedData);
@@ -344,14 +348,10 @@ const App = (() => {
       if (i >= total) {
         send({ t: 'rom_done' });
         setHostProgress(1, '✓ ROM sent! Waiting for Player 2 to load...');
-        // Don't start yet — wait for P2's 'rom_ready' confirmation
         return;
       }
-      const start = i * CHUNK_SIZE;
-      const slice = bytes.slice(start, start + CHUNK_SIZE);
-      let b64 = '';
-      for (let j = 0; j < slice.length; j++) b64 += String.fromCharCode(slice[j]);
-      send({ t: 'rom_chunk', i, d: btoa(b64) });
+      const slice = bytes.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE); // raw binary, no base64
+      send({ t: 'rom_chunk', i, d: slice });
       setHostProgress(i / total, 'Sending ROM ' + ((i / total * 100) | 0) + '%');
       i++;
       setTimeout(next, 0);
@@ -363,8 +363,9 @@ const App = (() => {
     const bytes = new Uint8Array(romSize);
     let offset = 0;
     for (let i = 0; i < romTotalChunks; i++) {
-      const raw = atob(romChunks[i]);
-      for (let j = 0; j < raw.length; j++) bytes[offset++] = raw.charCodeAt(j);
+      const chunk = new Uint8Array(romChunks[i]); // already raw binary
+      bytes.set(chunk, offset);
+      offset += chunk.length;
     }
     romBuffer = bytes.buffer;
     setJoinProgress(1, '✓ ROM received! Ready to play.');
@@ -387,7 +388,7 @@ const App = (() => {
     // Automatically correct stuck keys every 100ms
     if (!btnSyncInterval) {
       btnSyncInterval = setInterval(() => {
-        if (nes && socket && socket.connected) {
+        if (nes && conn && conn.open) {
           send({ t: 'btns', s: localBtnState });
         }
       }, 100);
@@ -396,7 +397,7 @@ const App = (() => {
     // Host sends compressed state to P2 every 5 seconds to keep emulators in perfect sync
     if (role === 'host' && !syncInterval) {
       syncInterval = setInterval(() => {
-        if (nes && socket && socket.connected) {
+        if (nes && conn && conn.open) {
           try { 
             const stateData = compressState(nes.toJSON());
             send({ t: 'sync', d: stateData }); 
@@ -561,7 +562,8 @@ const App = (() => {
     if (syncInterval) { clearInterval(syncInterval); syncInterval = null; }
     if (nes)      { nes = null; }
     if (audioCtx) { audioCtx.close().catch(() => {}); audioCtx = null; }
-    if (socket)   { socket.disconnect(); socket = null; }
+    if (conn)     { conn.close(); conn = null; }
+    if (peer)     { peer.destroy(); peer = null; }
     leftBuf = []; rightBuf = [];
     romBuffer = null; romChunks = {};
     romTotalChunks = 0; romReceivedCount = 0;
