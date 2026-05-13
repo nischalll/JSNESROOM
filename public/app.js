@@ -92,14 +92,93 @@ const App = (() => {
     { urls: 'stun:stun2.l.google.com:19302' },
   ];
 
-  // Same host as the page by default; override before app.js loads: window.NES_SIGNAL_URL = 'http://IP:9000'
-  function defaultSignalUrl() {
+  // Signaling URL: NEVER guess ":9000" on public hosts (e.g. Vercel) — that URL does not exist.
+  // Override: window.NES_SIGNAL_URL or <meta name="nes-signal-url" content="https://...">
+  // Production split: static on Vercel → Socket.IO on Render (same project).
+  const RENDER_SIGNAL_ORIGIN = 'https://jsnesroom.onrender.com';
+
+  let _cachedSignalUrl;
+  function inferLocalDevSignalUrl() {
     if (typeof location === 'undefined') return 'http://127.0.0.1:9000';
     if (location.protocol === 'file:') return 'http://127.0.0.1:9000';
+    const h = location.hostname;
+    const isLocal =
+      h === 'localhost' ||
+      h === '127.0.0.1' ||
+      h === '[::1]' ||
+      h.endsWith('.local');
+    if (!isLocal) return null;
     if (location.port === '9000') return location.origin;
-    return `${location.protocol}//${location.hostname}:9000`;
+    const host = h === '[::1]' ? '127.0.0.1' : h;
+    return `http://${host}:9000`;
   }
-  const SIGNAL_URL = (typeof window !== 'undefined' && window.NES_SIGNAL_URL) || defaultSignalUrl();
+
+  /** When the static UI and Socket.IO are on different public origins (e.g. Vercel + Render). */
+  function inferProductionSplitSignalUrl() {
+    if (typeof location === 'undefined') return null;
+    const h = location.hostname;
+    if (h === 'jsnesroom.vercel.app' || h === 'www.jsnesroom.vercel.app') {
+      return RENDER_SIGNAL_ORIGIN;
+    }
+    if (h === 'jsnesroom.onrender.com') {
+      return `${location.protocol}//${location.host}`.replace(/\/$/, '');
+    }
+    return null;
+  }
+
+  function getSignalUrl() {
+    if (_cachedSignalUrl) return _cachedSignalUrl;
+    const w =
+      typeof window !== 'undefined' &&
+      window.NES_SIGNAL_URL &&
+      String(window.NES_SIGNAL_URL).trim();
+    if (w) {
+      _cachedSignalUrl = w.replace(/\/$/, '');
+      return _cachedSignalUrl;
+    }
+    const meta =
+      typeof document !== 'undefined' &&
+      document.querySelector('meta[name="nes-signal-url"]');
+    if (meta && meta.content && String(meta.content).trim()) {
+      _cachedSignalUrl = String(meta.content).trim().replace(/\/$/, '');
+      return _cachedSignalUrl;
+    }
+    const split = inferProductionSplitSignalUrl();
+    if (split) {
+      _cachedSignalUrl = split;
+      return _cachedSignalUrl;
+    }
+    const inferred = inferLocalDevSignalUrl();
+    if (inferred) {
+      _cachedSignalUrl = inferred;
+      return _cachedSignalUrl;
+    }
+    return null;
+  }
+
+  /** Console-only networking logs (always on). Toggle backtick ` still controls on-screen debug panel. */
+  function logNet(level, ...args) {
+    const prefix = '[NESROOM]';
+    if (level === 'warn') console.warn(prefix, ...args);
+    else if (level === 'error') console.error(prefix, ...args);
+    else console.log(prefix, ...args);
+  }
+
+  function warnIfInsecureSignalOnHttpsPage(signalUrl) {
+    try {
+      if (typeof location === 'undefined' || !signalUrl) return;
+      if (location.protocol === 'https:' && /^http:\/\//i.test(signalUrl)) {
+        logNet(
+          'warn',
+          'Page is HTTPS but signaling URL is HTTP — the browser may block the connection. Use an https:// signaling URL.',
+          { signalUrl }
+        );
+      }
+    } catch (_) {}
+  }
+
+  const NO_SIGNAL_MSG =
+    'Signaling URL unknown for this host. Set window.NES_SIGNAL_URL or <meta name="nes-signal-url"> to your Socket.IO server (e.g. https://jsnesroom.onrender.com).';
 
   function makeRoomCode() {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -270,6 +349,7 @@ const App = (() => {
       peerConnection.oniceconnectionstatechange = () => {
         const state = peerConnection.iceConnectionState;
         logDebug('ICE state → ' + state);
+        logNet('log', 'ICE connection state', { state });
         if (state === 'connected' || state === 'completed') {
           logDebug('ICE connected — NAT traversal succeeded.');
         } else if (state === 'failed') {
@@ -286,6 +366,7 @@ const App = (() => {
   function attachDataChannel(channel) {
     dc = channel;
     dc.binaryType = 'arraybuffer';
+    logNet('log', 'RTCDataChannel created/received', { label: channel.label, id: channel.id });
     dc.onopen = () => {
       onConnOpen();
       if (role === 'host') {
@@ -309,6 +390,7 @@ const App = (() => {
 
   function onSocketRelay(msg) {
     if (!msg || msg.t !== 'webrtc') return;
+    logNet('log', 'relay webrtc', { phase: msg.phase, role });
     if (role === 'host' && msg.phase === 'answer') {
       applyHostAnswer(msg.payload).catch((e) => {
         logDebug('applyHostAnswer: ' + e.message);
@@ -342,6 +424,7 @@ const App = (() => {
     const payload = { sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp }, ice: localIceBuffer.slice() };
     socket.emit('relay', { code: roomCode, msg: { t: 'webrtc', phase: 'offer', payload } });
     logDebug('Sent WebRTC offer (SDP + ICE bundle).');
+    logNet('log', 'Sent WebRTC offer', { roomCode, iceCount: localIceBuffer.length });
   }
 
   async function applyHostAnswer(payload) {
@@ -351,6 +434,7 @@ const App = (() => {
       await pc.addIceCandidate(c).catch(() => {});
     }
     logDebug('Applied guest answer + remote ICE.');
+    logNet('log', 'Applied guest WebRTC answer', { iceAdded: (payload.ice && payload.ice.length) || 0 });
   }
 
   async function applyGuestOffer(payload) {
@@ -375,10 +459,12 @@ const App = (() => {
     const out = { sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp }, ice: localIceBuffer.slice() };
     socket.emit('relay', { code: roomCode, msg: { t: 'webrtc', phase: 'answer', payload: out } });
     logDebug('Sent WebRTC answer (SDP + ICE bundle).');
+    logNet('log', 'Sent WebRTC answer', { roomCode, iceCount: localIceBuffer.length });
   }
 
   function onConnClose() {
     logDebug('RTCDataChannel closed.');
+    logNet('warn', 'RTCDataChannel closed', { role });
     dc = null;
     if (role === 'host') {
       toast('Player 2 disconnected. Waiting for new player...', 'error');
@@ -414,21 +500,51 @@ const App = (() => {
     if (typeof io !== 'function') {
       setHostStatus('Socket.IO client missing. Check index.html script tag.');
       toast('Missing socket.io client', 'error');
+      logNet('error', 'Socket.IO global `io` is missing — check index.html script tag.');
       return;
     }
 
-    socket = io(SIGNAL_URL, { transports: ['websocket', 'polling'], reconnection: false });
+    const signalUrl = getSignalUrl();
+    if (!signalUrl) {
+      setHostStatus(NO_SIGNAL_MSG);
+      toast('Signaling URL not configured', 'error');
+      logNet('error', 'getSignalUrl() returned null — not localhost and no NES_SIGNAL_URL / meta nes-signal-url.', {
+        hint: 'Deploy signaling-server (Railway/Render/Fly) and set window.NES_SIGNAL_URL to that https URL.',
+        page: typeof location !== 'undefined' ? location.href : '(unknown)',
+      });
+      return;
+    }
+    warnIfInsecureSignalOnHttpsPage(signalUrl);
+    logNet('log', 'Host: connecting Socket.IO', { signalUrl, roomCodePreview: roomCode });
+
+    socket = io(signalUrl, { transports: ['websocket', 'polling'], reconnection: false });
+
+    socket.on('connect', () => {
+      logNet('log', 'socket connect', { id: socket.id, signalUrl });
+      socket.emit('host', roomCode);
+    });
+    socket.on('disconnect', (reason) => {
+      logNet('warn', 'socket disconnect', { reason, wasHost: role === 'host' });
+    });
+    if (socket.io && socket.io.engine) {
+      socket.io.engine.on('upgrade', (transport) => {
+        logNet('log', 'socket transport upgrade', { transport: transport.name });
+      });
+    }
 
     socket.on('relay', onSocketRelay);
     socket.on('peer_joined', () => {
       if (p2Joined) return;
+      logNet('log', 'peer_joined — starting WebRTC as host');
       setHostStatus('Player 2 found — establishing P2P link...');
       startHostWebRTC().catch((e) => {
         logDebug('startHostWebRTC: ' + e.message);
+        logNet('error', 'startHostWebRTC failed', e);
         toast('Could not start WebRTC: ' + e.message, 'error');
       });
     });
     socket.on('peer_left', (info) => {
+      logNet('warn', 'peer_left', info);
       if (info && info.role === 'p2') {
         teardownWebRTC();
         p2Joined = false;
@@ -442,19 +558,19 @@ const App = (() => {
       }
     });
 
-    socket.on('connect', () => {
-      socket.emit('host', roomCode);
-    });
     socket.on('host_ok', (code) => {
       roomCode = code;
       document.getElementById('room-code').textContent = code;
       setHostStatus('Share the code with Player 2 — then load your ROM.');
       logDebug('host_ok: ' + code);
+      logNet('log', 'host_ok', { code, signalUrl });
     });
     socket.on('connect_error', (err) => {
-      logDebug('socket connect_error: ' + (err && err.message));
-      setHostStatus('Cannot reach signaling server at ' + SIGNAL_URL + ' (start signaling-server).');
-      toast('Signaling server offline', 'error');
+      const msg = err && err.message ? err.message : String(err);
+      logDebug('socket connect_error: ' + msg);
+      logNet('error', 'socket connect_error', { message: msg, signalUrl, err });
+      setHostStatus('Cannot reach signaling server: ' + signalUrl + ' — ' + msg);
+      toast('Signaling server offline or blocked', 'error');
     });
   }
 
@@ -508,23 +624,52 @@ const App = (() => {
       statusEl.textContent = 'Socket.IO client missing.';
       document.getElementById('btn-join-go').disabled = false;
       toast('Missing socket.io client', 'error');
+      logNet('error', 'Socket.IO global `io` is missing.');
       return;
     }
 
-    socket = io(SIGNAL_URL, { transports: ['websocket', 'polling'], reconnection: false });
+    const signalUrl = getSignalUrl();
+    if (!signalUrl) {
+      statusEl.textContent = NO_SIGNAL_MSG;
+      document.getElementById('btn-join-go').disabled = false;
+      toast('Signaling URL not configured', 'error');
+      logNet('error', 'getSignalUrl() returned null — set NES_SIGNAL_URL or meta nes-signal-url.', { page: location.href });
+      return;
+    }
+    warnIfInsecureSignalOnHttpsPage(signalUrl);
+    logNet('log', 'Guest: connecting Socket.IO', { signalUrl, roomCode });
+
+    socket = io(signalUrl, { transports: ['websocket', 'polling'], reconnection: false });
+
+    socket.on('connect', () => {
+      logNet('log', 'socket connect', { id: socket.id, signalUrl });
+      socket.emit('join', roomCode);
+    });
+    socket.on('disconnect', (reason) => {
+      logNet('warn', 'socket disconnect', { reason, wasGuest: role === 'p2' });
+    });
+    if (socket.io && socket.io.engine) {
+      socket.io.engine.on('upgrade', (transport) => {
+        logNet('log', 'socket transport upgrade', { transport: transport.name });
+      });
+    }
 
     socket.on('relay', onSocketRelay);
     socket.on('join_ok', () => {
       statusEl.textContent = 'In room — waiting for host P2P handshake...';
       logDebug('join_ok');
+      logNet('log', 'join_ok', { roomCode, signalUrl });
     });
     socket.on('join_err', (err) => {
-      statusEl.textContent = typeof err === 'string' ? err : 'Could not join room.';
+      const text = typeof err === 'string' ? err : 'Could not join room.';
+      statusEl.textContent = text;
       document.getElementById('btn-join-go').disabled = false;
-      toast(statusEl.textContent, 'error');
+      toast(text, 'error');
+      logNet('error', 'join_err', { err, roomCode, signalUrl });
       teardownSocket();
     });
     socket.on('peer_left', (info) => {
+      logNet('warn', 'peer_left', info);
       if (info && info.role === 'host') {
         toast('Host left the game.', 'error');
         teardownWebRTC();
@@ -533,14 +678,13 @@ const App = (() => {
       }
     });
 
-    socket.on('connect', () => {
-      socket.emit('join', roomCode);
-    });
     socket.on('connect_error', (err) => {
-      statusEl.textContent = 'Cannot reach ' + SIGNAL_URL;
+      const msg = err && err.message ? err.message : String(err);
+      statusEl.textContent = 'Cannot reach signaling: ' + signalUrl + ' — ' + msg;
       document.getElementById('btn-join-go').disabled = false;
-      toast('Signaling server offline', 'error');
-      logDebug('socket connect_error: ' + (err && err.message));
+      toast('Signaling server offline or blocked', 'error');
+      logDebug('socket connect_error: ' + msg);
+      logNet('error', 'socket connect_error (guest)', { message: msg, signalUrl, err });
     });
   }
 
@@ -866,6 +1010,7 @@ const App = (() => {
     if (dc) { try { dc.close(); } catch (_) {} dc = null; }
     if (pc) { try { pc.close(); } catch (_) {} pc = null; }
     teardownSocket();
+    _cachedSignalUrl = undefined;
     leftBuf = []; rightBuf = [];
     romBuffer = null; romChunks = {};
     romTotalChunks = 0; romReceivedCount = 0;
@@ -885,6 +1030,11 @@ const App = (() => {
     document.getElementById('join-input').value = '';
     document.getElementById('btn-join-go').disabled = false;
   }
+
+  logNet('log', 'App ready', {
+    page: typeof location !== 'undefined' ? location.href : '',
+    signalingUrl: getSignalUrl() || '(not set for this host — set NES_SIGNAL_URL or meta nes-signal-url)',
+  });
 
   return { startHost, showJoin, joinGame, copyRoomCode, onRomSelected, showWelcome, startRemap, disconnect: showWelcome };
 

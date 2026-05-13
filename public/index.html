@@ -8,6 +8,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Inter:wght@400;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
+  <!-- Optional: override signaling (defaults: jsnesroom.vercel.app → Render; localhost → :9000). -->
+  <!-- <meta name="nes-signal-url" content="https://jsnesroom.onrender.com"> -->
   <!-- Socket.IO = signaling only (SDP/ICE). Game data stays P2P over WebRTC DataChannel. -->
   <script src="https://cdn.socket.io/4.7.4/socket.io.min.js" crossorigin="anonymous"></script>
   <script src="jsnes.min.js"></script>
@@ -121,6 +123,8 @@
   <!-- Toast -->
   <div id="toast" class="toast"></div>
 
+  <!-- app.js defaults: https://jsnesroom.vercel.app → signaling https://jsnesroom.onrender.com ; localhost → :9000 -->
+  <!-- Override: <script>window.NES_SIGNAL_URL='https://…';</script> before app.js -->
   <script src="app.js"></script>
 </body>
 </html>
