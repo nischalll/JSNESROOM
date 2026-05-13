@@ -8,7 +8,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Inter:wght@400;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
-  <script src="peerjs.min.js"></script>
+  <!-- Socket.IO = signaling only (SDP/ICE). Game data stays P2P over WebRTC DataChannel. -->
+  <script src="https://cdn.socket.io/4.7.4/socket.io.min.js" crossorigin="anonymous"></script>
   <script src="jsnes.min.js"></script>
   <script src="fflate.min.js"></script>
 </head>
@@ -27,7 +28,7 @@
         <button id="btn-host" class="btn btn-p1" onclick="App.startHost()">HOST GAME</button>
         <button id="btn-join" class="btn btn-p2" onclick="App.showJoin()">JOIN GAME</button>
       </div>
-      <p class="hint">Browser-to-browser. No installs. No server.</p>
+      <p class="hint">Browser-to-browser P2P. Room codes use your Socket.IO server for signaling only.</p>
     </div>
   </div>
 
