@@ -1,5 +1,6 @@
 const express = require('express');
 const http    = require('http');
+const path    = require('path');
 const { Server } = require('socket.io');
 
 const app    = express();
@@ -65,6 +66,9 @@ io.on('connection', socket => {
 });
 
 app.get('/health', (_, res) => res.send('OK'));
+
+// Optional: serve the game from the same port as Socket.IO (e.g. http://localhost:9000/index.html)
+app.use(express.static(path.join(__dirname, '..', 'public')));
 
 server.listen(PORT, () =>
   console.log(`[NESROOM] Socket.IO server on port ${PORT}`)
