@@ -83,6 +83,19 @@ const App = (() => {
   });
 
   // PeerJS free cloud used for signaling only (1 handshake). All game data is P2P.
+  // STUN servers — used once to discover public IP, no data ever passes through them
+  const ICE_SERVERS = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
+  ];
+
+  const PEER_CONFIG = {
+    config: { iceServers: ICE_SERVERS },
+    debug: 1,  // 0=none, 1=errors, 2=warnings, 3=all
+  };
 
   // Audio
   let audioCtx = null, leftBuf = [], rightBuf = [];
@@ -121,6 +134,28 @@ const App = (() => {
     logDebug('P2P data channel open.');
   }
 
+  // Monitor ICE connection state to detect and report NAT traversal failures
+  function monitorICE(connection) {
+    try {
+      const pc = connection.peerConnection;
+      if (!pc) { logDebug('No underlying RTCPeerConnection — cannot monitor ICE.'); return; }
+      logDebug('ICE monitoring started. Current state: ' + pc.iceConnectionState);
+      pc.oniceconnectionstatechange = () => {
+        const state = pc.iceConnectionState;
+        logDebug('ICE state → ' + state);
+        if (state === 'connected' || state === 'completed') {
+          logDebug('ICE connected — NAT traversal succeeded.');
+        } else if (state === 'failed') {
+          logDebug('ICE FAILED — peers cannot reach each other. May need TURN relay.');
+          toast('Connection failed — network may be blocking P2P.', 'error');
+        } else if (state === 'disconnected') {
+          logDebug('ICE disconnected — attempting to reconnect...');
+          toast('Connection unstable, reconnecting...', 'error');
+        }
+      };
+    } catch(e) { logDebug('ICE monitor error: ' + e.message); }
+  }
+
   function onConnClose() {
     logDebug('P2P connection closed.');
     conn = null;
@@ -145,7 +180,7 @@ const App = (() => {
     showScreen('host');
     setHostStatus('Getting your room code...');
 
-    peer = new Peer(); // PeerJS assigns a free unique ID
+    peer = new Peer(PEER_CONFIG); // PeerJS assigns a free unique ID, using our ICE config
     peer.on('open', id => {
       roomCode = id;
       document.getElementById('room-code').textContent = id;
@@ -154,11 +189,18 @@ const App = (() => {
       logDebug('PeerJS opened. Room code: ' + id);
     });
     peer.on('connection', c => {
+      if (p2Joined && conn && conn.open) {
+        logDebug('Rejecting extra connection — P2 already joined.');
+        c.close();
+        return;
+      }
       conn = c;
-      conn.serialization = 'binary';
+      logDebug('Incoming connection. Serialization: ' + conn.serialization);
       conn.on('open', () => {
         p2Joined = true;
         onConnOpen();
+        logDebug('Data channel open. ICE state: ' + (conn.peerConnection ? conn.peerConnection.iceConnectionState : 'N/A'));
+        monitorICE(conn);
         if (romBuffer) {
           setHostStatus('✓ Player 2 connected! Sending ROM...');
           sendROM();
@@ -169,9 +211,15 @@ const App = (() => {
       });
       conn.on('data', msg => onData(msg));
       conn.on('close', onConnClose);
-      conn.on('error', e => logDebug('Conn error: ' + e));
+      conn.on('error', e => {
+        logDebug('Conn error: ' + e);
+        toast('Connection error: ' + e, 'error');
+      });
     });
-    peer.on('error', e => toast('Connection error: ' + e.type, 'error'));
+    peer.on('error', e => {
+      logDebug('Host Peer error: ' + e.type + ' — ' + e.message);
+      toast('Connection error: ' + e.type, 'error');
+    });
   }
 
   function copyRoomCode() {
@@ -220,30 +268,44 @@ const App = (() => {
     let retries = 0;
     const MAX_RETRIES = 5;
 
-    peer = new Peer();
+    peer = new Peer(PEER_CONFIG);
 
     function tryConnect() {
       logDebug('Connecting to host: ' + roomCode + ' (attempt ' + (retries + 1) + ')');
       statusEl.textContent = 'Connecting to host...' + (retries > 0 ? ' (retry ' + retries + ')' : '');
+
+      // Close previous attempt if any (prevent orphan connections)
+      if (conn) {
+        try { conn.close(); } catch(e) {}
+        conn = null;
+      }
+
       conn = peer.connect(roomCode, { reliable: true, serialization: 'binary' });
       conn.on('open', () => {
         onConnOpen();
+        logDebug('Data channel open. ICE state: ' + (conn.peerConnection ? conn.peerConnection.iceConnectionState : 'N/A'));
+        monitorICE(conn);
         statusEl.textContent = '✓ Connected! Waiting for host to send ROM...';
         toast('Connected to host!', 'success');
       });
       conn.on('data', msg => onData(msg));
       conn.on('close', onConnClose);
-      conn.on('error', e => logDebug('Conn error: ' + e));
+      conn.on('error', e => {
+        logDebug('Conn error: ' + e);
+      });
     }
 
-    peer.on('open', () => tryConnect());
+    peer.on('open', () => {
+      logDebug('P2 PeerJS opened. My ID: ' + peer.id);
+      tryConnect();
+    });
 
     peer.on('error', e => {
-      logDebug('Peer error: ' + e.type + ' (attempt ' + (retries + 1) + ')');
+      logDebug('Peer error: ' + e.type + ' — ' + e.message + ' (attempt ' + (retries + 1) + ')');
       if (e.type === 'peer-unavailable' && retries < MAX_RETRIES) {
         retries++;
         statusEl.textContent = 'Host not found, retrying... (' + retries + '/' + MAX_RETRIES + ')';
-        setTimeout(tryConnect, 1500);
+        setTimeout(tryConnect, 2000);
       } else {
         statusEl.textContent = '⚠ ' + e.type + '. Check the room code.';
         document.getElementById('btn-join-go').disabled = false;
